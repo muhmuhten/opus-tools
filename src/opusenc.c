@@ -284,6 +284,7 @@ int main(int argc, char **argv)
     {"padding", required_argument, NULL, 0},
     {"discard-comments", no_argument, NULL, 0},
     {"discard-pictures", no_argument, NULL, 0},
+    {"comment-mangler", required_argument, NULL, 0},
     {0, 0, 0, 0}
   };
   int i, ret;
@@ -379,7 +380,7 @@ int main(int argc, char **argv)
 
   start_time = time(NULL);
   srand(((getpid()&65535)<<15)^start_time);
-  serialno=rand();
+  serialno=1;
 
   opus_version=opus_get_version_string();
   /*Vendor string should just be the encoder library,
@@ -577,6 +578,8 @@ int main(int argc, char **argv)
           inopt.copy_pictures=0;
         } else if(strcmp(long_options[option_index].name,"discard-pictures")==0){
           inopt.copy_pictures=0;
+        } else if(strcmp(long_options[option_index].name,"comment-mangler")==0){
+          inopt.comment_mangler=optarg;
         }
         /*Commands whose arguments would leak file paths or just end up as metadata
            should have save_cmd=0; to prevent them from being saved in the
@@ -644,6 +647,55 @@ int main(int argc, char **argv)
   if(!in_format){
     fprintf(stderr,"Error parsing input file: %s\n",inFile);
     exit(1);
+  }
+
+  if(inopt.comment_mangler){
+#include <err.h>
+    /* XXX awful fragile hack */
+    int cp[2], pc[2];
+    if (pipe(cp) == -1 || pipe(pc) == -1)
+      err(2, "pipe");
+    pid_t pid = fork();
+    if (pid == -1)
+      err(2, "fork");
+
+    if (pid == 0) {
+      if (close(pc[0]) == -1 || close(cp[1]) == -1)
+        err(2, "close 1");
+      if ((cp[0] != 1 && dup2(cp[0], 0) == -1)
+          || (pc[1] != 0 && dup2(pc[1], 1) == -1))
+        err(2, "dup2");
+      execl("/bin/sh", "sh", "-c", inopt.comment_mangler,
+          outFile, inFile, (char *)0);
+      err(2, "execl");
+    }
+
+    if (close(pc[1]) == -1 || close(cp[0]) == -1)
+      err(2, "close 2");
+    uint32_t len = inopt.comments_length-8;
+    write(cp[1], &len, 4);
+    write(cp[1], inopt.comments+8, len);
+    if (close(cp[1]) == -1)
+      err(2, "close 3");
+
+    int r = read(pc[0], &len, 4);
+    if (r == -1)
+      err(2, "read 1");
+    else if (r == 0)
+      exit(0);
+    else if (r != 4)
+      errx(2, "short read 1");
+    inopt.comments_length = len+8;
+    inopt.comments = realloc(inopt.comments, inopt.comments_length);
+
+    do {
+      r = read(pc[0], inopt.comments+inopt.comments_length-len, len);
+      if (r == -1)
+        err(2, "read 2");
+      else if (r == 0)
+        errx(2, "short read 2");
+      len -= r;
+    } while (len > 0);
   }
 
   if(inopt.rate<100||inopt.rate>768000){

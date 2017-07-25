@@ -31,7 +31,6 @@ typedef struct
     int gain;
     int samplesize;
     int endianness;
-    char *infilename;
     int ignorelength;
     int skip;
     int extraout;
@@ -39,6 +38,7 @@ typedef struct
     int comments_length;
     int copy_comments;
     int copy_pictures;
+    char *comment_mangler;
 } oe_enc_opt;
 
 void setup_scaler(oe_enc_opt *opt, float scale);
